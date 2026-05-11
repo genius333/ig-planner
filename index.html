@@ -47,68 +47,88 @@ const ACCS=[
   {id:'l1',name:'LiWei',handle:'@liwei_zdorovie',niche:'Qigong',link:'https://instagram.com/liwei_zdorovie'}
 ];
 
-const DB='ig_sched_v2';
-// Функция: получить дату в полночь (без времени)
-function toMidnight(date) {
+const DB='ig_sched_v3';
+// Функция: получить дату в формате "YYYY-MM-DD" (без времени и часового пояса)
+function toLocalDateStr(date) {
   const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
-// Функция: разница в днях (целое число)
-function daysDiff(date1, date2) {
-  const d1 = toMidnight(date1);
-  const d2 = toMidnight(date2);
-  const diffTime = d2 - d1;
+// Функция: прибавить дни к дате в формате "YYYY-MM-DD"
+function addDaysToDateStr(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  return toLocalDateStr(date);
+}
+
+// Функция: разница в днях между двумя датами в формате "YYYY-MM-DD"
+function daysDiffDateStr(dateStr1, dateStr2) {
+  const [y1, m1, d1] = dateStr1.split('-').map(Number);
+  const [y2, m2, d2] = dateStr2.split('-').map(Number);
+  const date1 = new Date(y1, m1 - 1, d1);
+  const date2 = new Date(y2, m2 - 1, d2);
+  const diffTime = date2 - date1;
   return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+}
+
+// Функция: форматирование даты для отображения "ДД.ММ"
+function formatDisplayDate(dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  return `${d}.${m}`;
 }
 
 function init(){
   let saved = localStorage.getItem(DB);
   let data = saved ? JSON.parse(saved) : ACCS.map(a => ({...a, last: null}));
+  
+  // Миграция: если есть старые записи с ISO-строками, конвертируем в локальные даты
+  data.forEach(acc => {
+    if (acc.last && acc.last.includes('T')) {
+      acc.last = toLocalDateStr(new Date(acc.last));
+    }
+  });
+  
+  localStorage.setItem(DB, JSON.stringify(data));
   render(data);
   checkTomorrow(data);
 }
-
 function render(data){
   const list = document.getElementById('list');
   list.innerHTML = '';
   
   let r = 0, t = 0;
-  const now = new Date();
-  const today = toMidnight(now);
+  const todayStr = toLocalDateStr(new Date());
   
   data.forEach(acc => {
-    let next;
+    let nextStr;
     
     if (acc.last) {
       // Если есть последняя публикация: +3 дня
-      const lastDate = new Date(acc.last);
-      next = new Date(lastDate);
-      next.setDate(next.getDate() + 3);
+      nextStr = addDaysToDateStr(acc.last, 3);
     } else {
       // Если нет: сегодня
-      next = new Date(today);
+      nextStr = todayStr;
     }
     
-    const nextMidnight = toMidnight(next);
-    const diffDays = daysDiff(today, nextMidnight);
+    const diffDays = daysDiffDateStr(todayStr, nextStr);
     
     // Определяем статус
     let status;
-    if (diffDays < 0) {      status = 'overdue'; // Просрочено
+    if (diffDays < 0) {
+      status = 'overdue'; // Просрочено
     } else if (diffDays === 0) {
-      status = 'ready'; // Сегодня
+      // Проверяем, не опубликовали ли мы уже сегодня
+      if (acc.last === todayStr) {
+        status = 'done'; // Уже сделали сегодня
+      } else {
+        status = 'ready'; // Можно публиковать
+      }
     } else {
       status = 'wait'; // Ждём
-    }
-    
-    // Проверяем, не отметили ли мы уже сегодня
-    if (acc.last) {
-      const lastMidnight = toMidnight(new Date(acc.last));
-      if (lastMidnight.getTime() === today.getTime() && status !== 'ready') {
-        status = 'done';
-      }
     }
     
     if (status === 'ready' || status === 'overdue') r++;
@@ -125,8 +145,7 @@ function render(data){
       'ready': '📤 ОТПУБЛИКОВАТЬ',
       'overdue': '⚠️ ПРОСРОЧЕНО',
       'wait': '⏳ ЧЕРЕЗ ' + diffDays + ' ДН.'
-    }[status];
-    
+    }[status];    
     const btnClass = {
       'done': 'btn done',
       'ready': 'btn',
@@ -134,7 +153,7 @@ function render(data){
       'wait': 'btn locked'
     }[status];
     
-    const nextDateStr = nextMidnight.toLocaleDateString('ru-RU', {day: '2-digit', month: '2-digit'});
+    const nextDateStr = formatDisplayDate(nextStr);
     
     card.innerHTML = `
       ${badge}
@@ -145,7 +164,8 @@ function render(data){
       <button class="${btnClass}" onclick="doPost('${acc.id}')" ${isDisabled ? 'disabled' : ''}>${btnText}</button>
     `;
     
-    list.appendChild(card);  });
+    list.appendChild(card);
+  });
   
   document.getElementById('readyCount').innerText = r;
   document.getElementById('tomorrowCount').innerText = t;
@@ -159,15 +179,13 @@ function showToast(msg, isWarning){
 }
 
 function checkTomorrow(data){
-  const today = toMidnight(new Date());
+  const todayStr = toLocalDateStr(new Date());
   let tomorrowPosts = [];
   
   data.forEach(acc => {
     if (acc.last) {
-      const lastDate = new Date(acc.last);
-      const next = new Date(lastDate);
-      next.setDate(next.getDate() + 3);
-      const diffDays = daysDiff(today, toMidnight(next));
+      const nextStr = addDaysToDateStr(acc.last, 3);
+      const diffDays = daysDiffDateStr(todayStr, nextStr);
       if (diffDays === 1) {
         tomorrowPosts.push(acc.name);
       }
@@ -176,8 +194,7 @@ function checkTomorrow(data){
   
   if (tomorrowPosts.length > 0) {
     showToast('🔔 ЗАВТРА ПУБЛИКАЦИЯ:\n' + tomorrowPosts.join(', '), true);
-  }
-}
+  }}
 
 window.doPost = function(id){
   let raw = localStorage.getItem(DB);
@@ -185,7 +202,8 @@ window.doPost = function(id){
   let acc = data.find(a => a.id === id);
   
   if (acc) {
-    acc.last = new Date().toISOString();
+    // Сохраняем ТОЛЬКО дату в локальном формате (без времени и часового пояса)
+    acc.last = toLocalDateStr(new Date());
     localStorage.setItem(DB, JSON.stringify(data));
     render(data);
     checkTomorrow(data);
@@ -194,7 +212,8 @@ window.doPost = function(id){
   }
 };
 
-document.getElementById('notifBtn').onclick = () => {  showToast('Планировщик готов!');
+document.getElementById('notifBtn').onclick = () => {
+  showToast('Планировщик готов!');
 };
 
 init();
