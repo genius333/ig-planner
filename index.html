@@ -25,58 +25,29 @@ h1{margin:0;font-size:20px;background:linear-gradient(90deg,#7c3aed,#ec4899);-we
 #toast.warning{background:#ef4444}
 a{text-decoration:none}
 .loading{text-align:center;padding:40px;color:#64748b}
-#debug-panel{
-  display:none;
-  background:#1e1e2e;
-  border:2px solid #ef4444;
-  border-radius:12px;
-  padding:15px;
-  margin-bottom:20px;
-  color:#fca5a5;
-  font-size:13px;
-  line-height:1.5;
-  word-break:break-word;
-}
-#debug-panel button{
-  margin-top:10px;
-  background:#334155;
-  color:#fff;
-  border:none;
-  padding:8px 12px;
-  border-radius:8px;
-  cursor:pointer;
-}
 </style>
-</head><body>
+</head>
+<body>
 <header>
 <h1>Планировщик IG</h1>
 <button id="notifBtn" style="background:#f59e0b;border:none;padding:5px 10px;border-radius:20px;cursor:pointer">🔔</button>
 </header>
-
 <main>
-<!--  Панель ошибок (появится только если что-то сломалось) -->
-<div id="debug-panel">
-  <b>⚠️ Ошибка подключения:</b><br>
-  <span id="error-text"></span>
-  <button onclick="document.getElementById('debug-panel').style.display='none'">Скрыть</button>
-</div>
-
 <div class="stats">
-  <div><b id="readyCount">0</b><br>Готов</div>
-  <div><b id="tomorrowCount">0</b><br>Завтра</div>
+<div><b id="readyCount">0</b><br>Готов</div>
+<div><b id="tomorrowCount">0</b><br>Завтра</div>
 </div>
 <div id="list"><div class="loading">Загрузка...</div></div>
-<p class="hint" id="mode-hint">Данные синхронизируются с облаком ☁️</p>
+<p class="hint">Данные синхронизируются с облаком ☁️</p>
 </main>
 <div id="toast"></div>
 
-<!-- Firebase SDK -->
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, collection, setDoc, doc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+<!-- Firebase через обычные скрипты (не модули!) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDxVsXvX9HMS2eq1y1wMI2ogEQ_K4rUR3c",
+<script>
+const firebaseConfig = {  apiKey: "AIzaSyDxVsXvX9HMS2eq1y1wMI2ogEQ_K4rUR3c",
   authDomain: "instagram-planner-19e7c.firebaseapp.com",
   projectId: "instagram-planner-19e7c",
   storageBucket: "instagram-planner-19e7c.firebasestorage.app",
@@ -91,12 +62,12 @@ const ACCS = [
 ];
 
 const DB_KEY = 'ig_sched_v3';
-let useCloud = true;
-let db, colRef;
+let db;
 
 // Утилиты дат
 function toLocalDateStr(date) {
-  const d = new Date(date);  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 function addDaysToDateStr(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -121,18 +92,11 @@ function showToast(msg, isWarning){
   setTimeout(() => t.className = '', 3000);
 }
 
-function showError(msg) {
-  const panel = document.getElementById('debug-panel');
-  document.getElementById('error-text').innerText = msg;
-  panel.style.display = 'block';
-}
-
 function render(data){
   const list = document.getElementById('list');
   list.innerHTML = '';
   let r = 0, t = 0;
   const todayStr = toLocalDateStr(new Date());
-
   data.forEach(acc => {
     let nextStr = acc.last ? addDaysToDateStr(acc.last, 3) : todayStr;
     const diffDays = daysDiffDateStr(todayStr, nextStr);
@@ -145,6 +109,7 @@ function render(data){
     const isDisabled = status === 'wait' || status === 'done';
     const btnText = {'done':'✓ ВЫПОЛНЕНО','ready':'📤 ОТПУБЛИКОВАТЬ','overdue':'⚠️ ПРОСРОЧЕНО','wait':'⏳ ЧЕРЕЗ '+diffDays+' ДН.'}[status];
     const btnClass = {'done':'btn done','ready':'btn','overdue':'btn overdue','wait':'btn locked'}[status];
+
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
@@ -162,24 +127,25 @@ function render(data){
   document.getElementById('tomorrowCount').innerText = t;
 
   document.querySelectorAll('.btn:not(:disabled)').forEach(btn => {
-    btn.onclick = () => doPost(btn.dataset.id);
+    btn.onclick = function() { doPost(this.dataset.id); };
   });
 }
 
-window.doPost = async function(id){
+window.doPost = function(id){
   const todayStr = toLocalDateStr(new Date());
-  if (useCloud) {
-    try {
-      await setDoc(doc(db, 'instagram_accounts', id), { last: todayStr }, { merge: true });
-    } catch (e) {
-      console.error(e);
-      showError('Не удалось сохранить в облако: ' + e.message);
-      useCloud = false;
-      document.getElementById('mode-hint').innerText = '⚠️ Режим офлайн (данные сохраняются в телефоне)';
-    }
-  }
   
-  // Локальное обновление (всегда работает)
+  // Сохраняем в Firebase
+  if (db) {
+    db.collection('instagram_accounts').doc(id).set({ last: todayStr }, { merge: true })
+      .then(() => {
+        console.log('Сохранено в облако');
+      })
+      .catch(err => {
+        console.error('Ошибка Firebase:', err);
+        showToast('⚠️ Ошибка синхронизации', true);
+      });
+  }
+    // Локальное обновление
   let data = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
   let acc = data.find(a => a.id === id);
   if (acc) {
@@ -194,33 +160,51 @@ window.doPost = async function(id){
 
 function checkTomorrow(data){
   const todayStr = toLocalDateStr(new Date());
-  const tomorrowPosts = data.filter(acc => acc.last && daysDiffDateStr(todayStr, addDaysToDateStr(acc.last, 3)) === 1).map(acc => acc.name);  if (tomorrowPosts.length > 0) showToast(' ЗАВТРА ПУБЛИКАЦИЯ:\n' + tomorrowPosts.join(', '), true);
+  const tomorrowPosts = data.filter(acc => acc.last && daysDiffDateStr(todayStr, addDaysToDateStr(acc.last, 3)) === 1).map(acc => acc.name);
+  if (tomorrowPosts.length > 0) showToast('🔔 ЗАВТРА ПУБЛИКАЦИЯ:\n' + tomorrowPosts.join(', '), true);
 }
 
 // Инициализация
-async function init(){
+function init(){
   try {
-    const app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    colRef = collection(db, 'instagram_accounts');
+    // Инициализация Firebase
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.firestore();
     
-    // Проверка подключения
-    await getDocs(colRef);
+    // Включаем offline persistence
+    db.enablePersistence().catch(err => {
+      console.log('Persistence error:', err);
+    });
     
-    // Если дошли сюда — облако работает
-    onSnapshot(colRef, (snapshot) => {
+    // Создаём дефолтные аккаунты если их нет
+    const batch = db.batch();
+    ACCS.forEach(acc => {
+      const ref = db.collection('instagram_accounts').doc(acc.id);
+      batch.set(ref, {
+        name: acc.name,
+        handle: acc.handle,
+        niche: acc.niche,
+        link: acc.link,
+        last: null,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+    batch.commit();
+    
+    // Подписка на изменения
+    db.collection('instagram_accounts').onSnapshot(snapshot => {
       const data = [];
-      snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
+      snapshot.forEach(doc => {        data.push({ id: doc.id, ...doc.data() });
+      });
       render(data);
       checkTomorrow(data);
+    }, error => {
+      console.error('Firestore error:', error);
+      document.getElementById('list').innerHTML = '<div class="loading" style="color:#ef4444">Ошибка подключения<br><small>Проверь интернет</small></div>';
     });
     
   } catch (err) {
-    console.error(err);
-    showError('Firebase не отвечает: ' + err.message + '\n\nПереключаюсь на локальное хранилище...');
-    useCloud = false;
-    document.getElementById('mode-hint').innerText = '📱 Офлайн-режим (данные в телефоне)';
-    
+    console.error('Init error:', err);
     // Фоллбэк на localStorage
     let data = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
     if (data.length === 0) {
@@ -229,10 +213,13 @@ async function init(){
     }
     render(data);
     checkTomorrow(data);
+    document.querySelector('.hint').innerText = '📱 Офлайн-режим';
   }
 }
 
 document.getElementById('notifBtn').onclick = () => showToast('Планировщик готов!');
+
+// Запуск
 init();
 </script>
 </body>
