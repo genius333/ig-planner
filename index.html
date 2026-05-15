@@ -25,29 +25,57 @@ h1{margin:0;font-size:20px;background:linear-gradient(90deg,#7c3aed,#ec4899);-we
 #toast.warning{background:#ef4444}
 a{text-decoration:none}
 .loading{text-align:center;padding:40px;color:#64748b}
+#debug-panel{
+  display:none;
+  background:#1e1e2e;
+  border:2px solid #ef4444;
+  border-radius:12px;
+  padding:15px;
+  margin-bottom:20px;
+  color:#fca5a5;
+  font-size:13px;
+  line-height:1.5;
+  word-break:break-word;
+}
+#debug-panel button{
+  margin-top:10px;
+  background:#334155;
+  color:#fff;
+  border:none;
+  padding:8px 12px;
+  border-radius:8px;
+  cursor:pointer;
+}
 </style>
-</head>
-<body>
+</head><body>
 <header>
 <h1>Планировщик IG</h1>
 <button id="notifBtn" style="background:#f59e0b;border:none;padding:5px 10px;border-radius:20px;cursor:pointer">🔔</button>
 </header>
+
 <main>
+<!--  Панель ошибок (появится только если что-то сломалось) -->
+<div id="debug-panel">
+  <b>⚠️ Ошибка подключения:</b><br>
+  <span id="error-text"></span>
+  <button onclick="document.getElementById('debug-panel').style.display='none'">Скрыть</button>
+</div>
+
 <div class="stats">
-<div><b id="readyCount">0</b><br>Готов</div>
-<div><b id="tomorrowCount">0</b><br>Завтра</div>
+  <div><b id="readyCount">0</b><br>Готов</div>
+  <div><b id="tomorrowCount">0</b><br>Завтра</div>
 </div>
 <div id="list"><div class="loading">Загрузка...</div></div>
-<p class="hint">Данные синхронизируются с облаком ☁️</p>
+<p class="hint" id="mode-hint">Данные синхронизируются с облаком ☁️</p>
 </main>
 <div id="toast"></div>
 
 <!-- Firebase SDK -->
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
-import { getFirestore, collection, setDoc, doc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, setDoc, doc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
-// 🔥 ТВОЙ FIREBASE CONFIGconst firebaseConfig = {
+const firebaseConfig = {
   apiKey: "AIzaSyDxVsXvX9HMS2eq1y1wMI2ogEQ_K4rUR3c",
   authDomain: "instagram-planner-19e7c.firebaseapp.com",
   projectId: "instagram-planner-19e7c",
@@ -56,22 +84,19 @@ import { getFirestore, collection, setDoc, doc, onSnapshot, getDocs } from "http
   appId: "1:657952242785:web:5e12f55dd31c71b4e5be20"
 };
 
-// Инициализация
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const COLLECTION = "instagram_accounts";
-
-// Исходные аккаунты
 const ACCS = [
   {id:'e1',name:'Евгений ИИ',handle:'@evgeny__ai',niche:'AI',link:'https://instagram.com/evgeny__ai'},
   {id:'m1',name:'Mia Creates',handle:'@mia.creates.ai26',niche:'Skating',link:'https://instagram.com/mia.creates.ai26'},
   {id:'l1',name:'LiWei',handle:'@liwei_zdorovie',niche:'Qigong',link:'https://instagram.com/liwei_zdorovie'}
 ];
 
-// === ДАТЫ ===
+const DB_KEY = 'ig_sched_v3';
+let useCloud = true;
+let db, colRef;
+
+// Утилиты дат
 function toLocalDateStr(date) {
-  const d = new Date(date);
-  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const d = new Date(date);  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 function addDaysToDateStr(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -89,50 +114,37 @@ function formatDisplayDate(dateStr) {
   return `${d}.${m}`;
 }
 
-// === UI ===
 function showToast(msg, isWarning){
   const t = document.getElementById('toast');
   t.innerText = msg;
   t.className = isWarning ? 'show warning' : 'show';
   setTimeout(() => t.className = '', 3000);
 }
-// === РЕНДЕР ===
+
+function showError(msg) {
+  const panel = document.getElementById('debug-panel');
+  document.getElementById('error-text').innerText = msg;
+  panel.style.display = 'block';
+}
+
 function render(data){
   const list = document.getElementById('list');
   list.innerHTML = '';
-  
   let r = 0, t = 0;
   const todayStr = toLocalDateStr(new Date());
-  
+
   data.forEach(acc => {
     let nextStr = acc.last ? addDaysToDateStr(acc.last, 3) : todayStr;
     const diffDays = daysDiffDateStr(todayStr, nextStr);
-    
-    let status;
-    if (diffDays < 0) status = 'overdue';
-    else if (diffDays === 0) status = (acc.last === todayStr) ? 'done' : 'ready';
-    else status = 'wait';
+    let status = diffDays < 0 ? 'overdue' : (diffDays === 0 ? (acc.last === todayStr ? 'done' : 'ready') : 'wait');
     
     if (status === 'ready' || status === 'overdue') r++;
     if (status === 'wait' && diffDays === 1) t++;
-    
+
     const badge = status === 'overdue' ? '<div class="badge">!</div>' : '';
     const isDisabled = status === 'wait' || status === 'done';
-    
-    const btnText = {
-      'done': '✓ ВЫПОЛНЕНО',
-      'ready': '📤 ОТПУБЛИКОВАТЬ',
-      'overdue': '⚠️ ПРОСРОЧЕНО',
-      'wait': '⏳ ЧЕРЕЗ ' + diffDays + ' ДН.'
-    }[status];
-    
-    const btnClass = {
-      'done': 'btn done',
-      'ready': 'btn',
-      'overdue': 'btn overdue',
-      'wait': 'btn locked'
-    }[status];
-    
+    const btnText = {'done':'✓ ВЫПОЛНЕНО','ready':'📤 ОТПУБЛИКОВАТЬ','overdue':'⚠️ ПРОСРОЧЕНО','wait':'⏳ ЧЕРЕЗ '+diffDays+' ДН.'}[status];
+    const btnClass = {'done':'btn done','ready':'btn','overdue':'btn overdue','wait':'btn locked'}[status];
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
@@ -140,87 +152,88 @@ function render(data){
       <h3 style="margin:0"><a href="${acc.link}" target="_blank" style="color:#fff">${acc.name}</a></h3>
       <p style="color:#94a3b8;margin:5px 0">${acc.handle}</p>
       <div class="row"><span class="lbl">След. пост:</span><span>${formatDisplayDate(nextStr)}</span></div>
-      <div class="row"><span class="lbl">Через:</span><span style="color:${status === 'ready' ? '#22c55e' : status === 'overdue' ? '#ef4444' : '#fff'}">${diffDays} дн.</span></div>
-      <button class="${btnClass}" data-id="${acc.id}" ${isDisabled ? 'disabled' : ''}>${btnText}</button>
+      <div class="row"><span class="lbl">Через:</span><span style="color:${status==='ready'?'#22c55e':status==='overdue'?'#ef4444':'#fff'}">${diffDays} дн.</span></div>
+      <button class="${btnClass}" data-id="${acc.id}" ${isDisabled?'disabled':''}>${btnText}</button>
     `;
     list.appendChild(card);
   });
-    document.getElementById('readyCount').innerText = r;
+
+  document.getElementById('readyCount').innerText = r;
   document.getElementById('tomorrowCount').innerText = t;
-  
+
   document.querySelectorAll('.btn:not(:disabled)').forEach(btn => {
     btn.onclick = () => doPost(btn.dataset.id);
   });
 }
 
-// === ПОСТ ===
 window.doPost = async function(id){
   const todayStr = toLocalDateStr(new Date());
-  try {
-    await setDoc(doc(db, COLLECTION, id), { last: todayStr }, { merge: true });
+  if (useCloud) {
+    try {
+      await setDoc(doc(db, 'instagram_accounts', id), { last: todayStr }, { merge: true });
+    } catch (e) {
+      console.error(e);
+      showError('Не удалось сохранить в облако: ' + e.message);
+      useCloud = false;
+      document.getElementById('mode-hint').innerText = '⚠️ Режим офлайн (данные сохраняются в телефоне)';
+    }
+  }
+  
+  // Локальное обновление (всегда работает)
+  let data = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+  let acc = data.find(a => a.id === id);
+  if (acc) {
+    acc.last = todayStr;
+    localStorage.setItem(DB_KEY, JSON.stringify(data));
+    render(data);
+    checkTomorrow(data);
     showToast('✓ Отмечено! Следующий пост через 3 дня.');
     if (navigator.vibrate) navigator.vibrate(50);
-  } catch (e) {
-    console.error(e);
-    showToast('Ошибка сохранения', true);
   }
 };
 
-// === ПОДПИСКА ===
-async function subscribeToUpdates(){
-  const colRef = collection(db, COLLECTION);
-  
+function checkTomorrow(data){
+  const todayStr = toLocalDateStr(new Date());
+  const tomorrowPosts = data.filter(acc => acc.last && daysDiffDateStr(todayStr, addDaysToDateStr(acc.last, 3)) === 1).map(acc => acc.name);  if (tomorrowPosts.length > 0) showToast(' ЗАВТРА ПУБЛИКАЦИЯ:\n' + tomorrowPosts.join(', '), true);
+}
+
+// Инициализация
+async function init(){
   try {
-    // Проверяем, пустая ли база
-    const snapshot = await getDocs(colRef);
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    colRef = collection(db, 'instagram_accounts');
     
-    if (snapshot.empty) {
-      // Создаём дефолтные аккаунты
-      for (const acc of ACCS) {
-        await setDoc(doc(db, COLLECTION, acc.id), {
-          name: acc.name,
-          handle: acc.handle,
-          niche: acc.niche,
-          link: acc.link,
-          last: null,
-          createdAt: new Date().toISOString()
-        }, { merge: true });
-      }
-    }
+    // Проверка подключения
+    await getDocs(colRef);
     
-    // Подписываемся на изменения
+    // Если дошли сюда — облако работает
     onSnapshot(colRef, (snapshot) => {
       const data = [];
       snapshot.forEach(d => data.push({ id: d.id, ...d.data() }));
       render(data);
       checkTomorrow(data);
-    });    
-  } catch (error) {
-    console.error('Ошибка:', error);
-    document.getElementById('list').innerHTML = `
-      <div class="loading" style="color:#ef4444">
-        ❌ Ошибка подключения к Firebase<br><br>
-        <small>Открой консоль (F12) для деталей</small>
-      </div>
-    `;
+    });
+    
+  } catch (err) {
+    console.error(err);
+    showError('Firebase не отвечает: ' + err.message + '\n\nПереключаюсь на локальное хранилище...');
+    useCloud = false;
+    document.getElementById('mode-hint').innerText = '📱 Офлайн-режим (данные в телефоне)';
+    
+    // Фоллбэк на localStorage
+    let data = JSON.parse(localStorage.getItem(DB_KEY) || '[]');
+    if (data.length === 0) {
+      data = ACCS.map(a => ({...a, last: null}));
+      localStorage.setItem(DB_KEY, JSON.stringify(data));
+    }
+    render(data);
+    checkTomorrow(data);
   }
 }
 
-// === ЗАВТРА ===
-function checkTomorrow(data){
-  const todayStr = toLocalDateStr(new Date());
-  const tomorrowPosts = data
-    .filter(acc => acc.last && daysDiffDateStr(todayStr, addDaysToDateStr(acc.last, 3)) === 1)
-    .map(acc => acc.name);
-  
-  if (tomorrowPosts.length > 0) {
-    showToast('🔔 ЗАВТРА ПУБЛИКАЦИЯ:\n' + tomorrowPosts.join(', '), true);
-  }
-}
-
-// === СТАРТ ===
 document.getElementById('notifBtn').onclick = () => showToast('Планировщик готов!');
-subscribeToUpdates();
+init();
 </script>
 </body>
 </html>
